@@ -4,6 +4,8 @@ import gov.nist.javax.sip.SipStackExt;
 import gov.nist.javax.sip.clientauthutils.AccountManager;
 import gov.nist.javax.sip.clientauthutils.AuthenticationHelper;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +47,8 @@ import javax.sip.message.MessageFactory;
 import javax.sip.message.Request;
 import javax.sip.message.Response;
 
+import org.apache.log4j.Logger;
+
 public class SipgateSipListener implements SipListener
 {
 	private SipStack sipStack;
@@ -61,6 +65,8 @@ public class SipgateSipListener implements SipListener
 	private SipgateUserCredentials credentials;
 	private ServerTransaction inviteTid;
 	private Request inviteRequest;
+	
+	private final static Logger log = Logger.getLogger( SipgateSipListener.class ); 
 	
 	public SipgateSipListener()
 	{
@@ -161,8 +167,6 @@ public class SipgateSipListener implements SipListener
 		UserAgentHeader userAgentHeader = headerFactory.createUserAgentHeader(productList);		
 		request.addHeader(userAgentHeader);
 
-		System.out.println("***********************");
-		System.out.println(request.toString());
 		// Create the client transaction.
 		registerTid = sipProvider.getNewClientTransaction(request);
 
@@ -174,7 +178,6 @@ public class SipgateSipListener implements SipListener
 
 	public String getLocalIPAddress()
 	{
-		return "217.10.64.189";
 		/*
 		InetAddress internetAddress = null;
 		try
@@ -186,6 +189,8 @@ public class SipgateSipListener implements SipListener
 			// Default to loopback
 			return "127.0.0.1";
 		}
+		*/
+		/*
 		StringBuffer address = new StringBuffer();
 		byte[] bytes = internetAddress.getAddress();
 		for (int j = 0; j < bytes.length; j++)
@@ -196,19 +201,20 @@ public class SipgateSipListener implements SipListener
 				address.append('.');
 		}
 
-		System.out.println("getLocalIp return: " + address.toString());
+		log.debug("getLocalIp return: " + address.toString());
 		return address.toString();
 		 */
+		return "217.10.64.189";
 	}
 
 	public void processDialogTerminated(DialogTerminatedEvent arg0)
 	{
-		System.out.println(arg0);
+		log.debug(arg0);
 	}
 
 	public void processIOException(IOExceptionEvent arg0)
 	{
-		System.out.println(arg0);
+		log.debug(arg0);
 	}
 
 	public void processRequest(RequestEvent requestReceivedEvent)
@@ -216,7 +222,7 @@ public class SipgateSipListener implements SipListener
         Request request = requestReceivedEvent.getRequest();
         ServerTransaction serverTransactionId = requestReceivedEvent.getServerTransaction();
 
-        System.out.println("Request " + request.getMethod() + " received at "
+        log.debug("Request " + request.getMethod() + " received at "
                 + sipStack.getStackName()
                 + " with server transaction id " + serverTransactionId);
 
@@ -232,13 +238,13 @@ public class SipgateSipListener implements SipListener
 
 	public void processResponse(ResponseEvent responseReceivedEvent)
 	{	
-		System.out.println("Got a response");
+		log.debug("Got a response");
 		
 		Response response = (Response) responseReceivedEvent.getResponse();
 		ClientTransaction tid = responseReceivedEvent.getClientTransaction();
 		CSeqHeader cseq = (CSeqHeader) response.getHeader(CSeqHeader.NAME);
 
-		System.out.println("Response received : Status Code = " + response.getStatusCode() + " " + cseq);
+		log.debug("Response received : Status Code = " + response.getStatusCode() + " " + cseq);
 
 		if (response.getStatusCode() == Response.UNAUTHORIZED
 				|| response.getStatusCode() == Response.PROXY_AUTHENTICATION_REQUIRED)
@@ -265,19 +271,19 @@ public class SipgateSipListener implements SipListener
 				{
 					ContactHeader contactHeader = (ContactHeader) response.getHeader("Contact");
 					Integer seconds = contactHeader.getExpires();
-					System.out.println("Okay. We are registered for next " + seconds + " seconds.");
+					log.debug("Okay. We are registered for next " + seconds + " seconds.");
 				}
 				else if (cseq.getMethod().equals(Request.INVITE))
 				{
 					Dialog dialog = inviteTid.getDialog();
 					Request ackRequest = dialog.createAck(cseq.getSeqNumber());
-					System.out.println("Sending ACK");
+					log.debug("Sending ACK");
 					dialog.sendAck(ackRequest);
 				} else if (cseq.getMethod().equals(Request.CANCEL)) {
                     if (dialog.getState() == DialogState.CONFIRMED) {
                         // oops cancel went in too late. Need to hang up the
                         // dialog.
-                        System.out.println("Sending BYE -- cancel went in too late !!");
+                        log.debug("Sending BYE -- cancel went in too late !!");
                         Request byeRequest = dialog.createRequest(Request.BYE);
                         ClientTransaction ct = sipProvider.getNewClientTransaction(byeRequest);
                         dialog.sendRequest(ct);
@@ -294,28 +300,28 @@ public class SipgateSipListener implements SipListener
 	public void processTimeout(TimeoutEvent arg0)
 	{
 		// TODO Auto-generated method stub
-		System.out.println(arg0);
+		log.debug(arg0);
 	}
 
 	public void processTransactionTerminated(TransactionTerminatedEvent arg0)
 	{
-        System.out.println("Transaction terminated event recieved");
+        log.debug("Transaction terminated event recieved");
 	}
 	
     public void processBye(Request request,
             ServerTransaction serverTransactionId) {
         try {
-            System.out.println("got a bye");
+            log.debug("got a bye");
             if (serverTransactionId == null) {
-                System.out.println("null TID.");
+                log.debug("null TID.");
                 return;
             }
             Dialog dialog = serverTransactionId.getDialog();
-            System.out.println("Dialog State = " + dialog.getState());
+            log.debug("Dialog State = " + dialog.getState());
             Response response = messageFactory.createResponse(200, request);
             serverTransactionId.sendResponse(response);
-            System.out.println("Sending OK.");
-            System.out.println("Dialog State = " + dialog.getState());
+            log.debug("Sending OK.");
+            log.debug("Dialog State = " + dialog.getState());
 
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -331,15 +337,15 @@ public class SipgateSipListener implements SipListener
         SipProvider sipProvider = (SipProvider) requestEvent.getSource();
         Request request = requestEvent.getRequest();
         try {
-            System.out.println("Got an Invite sending Trying");
+            log.debug("Got an Invite sending Trying");
 
             FromHeader from = (FromHeader) request.getHeader("From");
-        	System.out.println("Call from: " + from.getAddress().getDisplayName());
+        	log.debug("Call from: " + from.getAddress().getDisplayName() +"/"+ from.getAddress().getURI());
 
         	ContactHeader contact = (ContactHeader) request.getHeader("Contact");
-        	System.out.println("Contact: " + contact.getAddress().getDisplayName() );
+        	log.debug("Contact: " + contact.getAddress().getDisplayName() +"/"+ contact.getAddress().getURI());
             
-            // System.out.println("shootme: " + request);
+            // log.debug("shootme: " + request);
             Response response = messageFactory.createResponse(Response.TRYING,
                     request);
             ServerTransaction st = requestEvent.getServerTransaction();
@@ -363,11 +369,7 @@ public class SipgateSipListener implements SipListener
             
             try {
                 if (inviteTid.getState() != TransactionState.COMPLETED) {
-                    System.out.println("shootme: Dialog state before 404: "
-                            + inviteTid.getDialog().getState());
                     inviteTid.sendResponse(okResponse);
-                    System.out.println("shootme: Dialog state after 404: "
-                            + inviteTid.getDialog().getState());
                 }
             } catch (SipException ex) {
                 ex.printStackTrace();
@@ -384,9 +386,9 @@ public class SipgateSipListener implements SipListener
     public void processCancel(Request request,
             ServerTransaction serverTransactionId) {
         try {
-            System.out.println("shootme:  got a cancel.");
+            log.debug("shootme:  got a cancel.");
             if (serverTransactionId == null) {
-                System.out.println("shootme:  null tid.");
+                log.debug("shootme:  null tid.");
                 return;
             }
             Response response = messageFactory.createResponse(200, request);
@@ -409,7 +411,7 @@ public class SipgateSipListener implements SipListener
      */
     public void processAck(Request request,
             ServerTransaction serverTransaction) {
-        System.out.println("shootme: got an ACK! ");
-        System.out.println("Dialog State = " + dialog.getState());
+        log.debug("shootme: got an ACK! ");
+        log.debug("Dialog State = " + dialog.getState());
     }    
 }
