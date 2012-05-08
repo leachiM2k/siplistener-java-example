@@ -4,12 +4,20 @@ import gov.nist.javax.sip.SipStackExt;
 import gov.nist.javax.sip.clientauthutils.AccountManager;
 import gov.nist.javax.sip.clientauthutils.AuthenticationHelper;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLConnection;
 import java.net.UnknownHostException;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import javax.sip.ClientTransaction;
 import javax.sip.Dialog;
@@ -18,6 +26,7 @@ import javax.sip.DialogTerminatedEvent;
 import javax.sip.IOExceptionEvent;
 import javax.sip.InvalidArgumentException;
 import javax.sip.ListeningPoint;
+import javax.sip.PeerUnavailableException;
 import javax.sip.RequestEvent;
 import javax.sip.ResponseEvent;
 import javax.sip.ServerTransaction;
@@ -27,7 +36,6 @@ import javax.sip.SipListener;
 import javax.sip.SipProvider;
 import javax.sip.SipStack;
 import javax.sip.TimeoutEvent;
-import javax.sip.TransactionState;
 import javax.sip.TransactionTerminatedEvent;
 import javax.sip.TransactionUnavailableException;
 import javax.sip.address.Address;
@@ -37,7 +45,6 @@ import javax.sip.header.CSeqHeader;
 import javax.sip.header.CallIdHeader;
 import javax.sip.header.ContactHeader;
 import javax.sip.header.FromHeader;
-import javax.sip.header.Header;
 import javax.sip.header.HeaderFactory;
 import javax.sip.header.MaxForwardsHeader;
 import javax.sip.header.ToHeader;
@@ -49,11 +56,12 @@ import javax.sip.message.Response;
 
 import org.apache.log4j.Logger;
 
+import com.sipgate.siplistener.processor.RequestProcessor;
+
 public class SipgateSipListener implements SipListener
 {
 	private SipStack sipStack;
 	private SipProvider sipProvider;
-	private boolean sipOnOffFlag;
 	private ClientTransaction registerTid;
 	private HeaderFactory headerFactory;
 	private AddressFactory addressFactory;
@@ -64,12 +72,41 @@ public class SipgateSipListener implements SipListener
 	private AccountManager accountManager = new SipgateAccountManager();
 	private SipgateUserCredentials credentials;
 	private ServerTransaction inviteTid;
-	private Request inviteRequest;
+	
+	private String localIPAddress;
+	private RequestProcessor requestProcessor;
 	
 	private final static Logger log = Logger.getLogger( SipgateSipListener.class ); 
-	
-	public SipgateSipListener()
+
+	class MyTimerTask extends TimerTask
 	{
+		SipgateSipListener listener;
+
+		public MyTimerTask(SipgateSipListener listener)
+		{
+			this.listener = listener;
+
+		}
+
+		public void run()
+		{
+			log.debug("Reinvite please");
+			try
+			{
+				listener.register();
+			}
+			catch (Exception e)
+			{
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+
+	}
+	
+	public SipgateSipListener() throws PeerUnavailableException
+	{
+		requestProcessor = new RequestProcessor();
 		credentials = (SipgateUserCredentials) accountManager.getCredentials(null, null);
 	}
 	
@@ -96,7 +133,6 @@ public class SipgateSipListener implements SipListener
 		SipgateSipListener listener = this;
 
 		sipProvider = sipStack.createSipProvider(lp);
-		sipOnOffFlag = true;
 		sipProvider.addSipListener(listener);
 	}
 
@@ -178,7 +214,11 @@ public class SipgateSipListener implements SipListener
 
 	public String getLocalIPAddress()
 	{
-		/*
+		if(localIPAddress != null)
+		{
+			return localIPAddress;
+		}
+		
 		InetAddress internetAddress = null;
 		try
 		{
@@ -187,10 +227,9 @@ public class SipgateSipListener implements SipListener
 		catch (UnknownHostException e)
 		{
 			// Default to loopback
+			e.printStackTrace();
 			return "127.0.0.1";
 		}
-		*/
-		/*
 		StringBuffer address = new StringBuffer();
 		byte[] bytes = internetAddress.getAddress();
 		for (int j = 0; j < bytes.length; j++)
@@ -201,44 +240,53 @@ public class SipgateSipListener implements SipListener
 				address.append('.');
 		}
 
-		log.debug("getLocalIp return: " + address.toString());
-		return address.toString();
-		 */
-		return "217.10.64.189";
+		localIPAddress = address.toString();
+		
+		if(internetAddress.isSiteLocalAddress() || internetAddress.isLoopbackAddress())
+		{
+			try
+			{
+				localIPAddress = getIPFromWhatismyip();
+			}
+			catch (Exception e)
+			{
+				e.printStackTrace();
+				localIPAddress = "127.0.0.1";
+			}			
+		}
+		
+		log.debug("getLocalIp return: " + localIPAddress);
+		return localIPAddress;
 	}
 
-	public void processDialogTerminated(DialogTerminatedEvent arg0)
+	protected String getIPFromWhatismyip() throws MalformedURLException, IOException
 	{
-		log.debug(arg0);
-	}
+		URL whatismyip = new URL("http://automation.whatismyip.com/n09230945.asp");
+		URLConnection connection = whatismyip.openConnection();
+		connection.addRequestProperty("Protocol", "Http/1.1");
+		connection.addRequestProperty("Connection", "keep-alive");
+		connection.addRequestProperty("Keep-Alive", "1000");
+		connection.addRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:12.0) Gecko/20100101 Firefox/12.0");
 
-	public void processIOException(IOExceptionEvent arg0)
-	{
-		log.debug(arg0);
+		BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+
+		String ip = in.readLine(); // you get the IP as a String
+		return ip;
 	}
 
 	public void processRequest(RequestEvent requestReceivedEvent)
 	{
-        Request request = requestReceivedEvent.getRequest();
-        ServerTransaction serverTransactionId = requestReceivedEvent.getServerTransaction();
-
-        log.debug("Request " + request.getMethod() + " received at "
-                + sipStack.getStackName()
-                + " with server transaction id " + serverTransactionId);
-
-        if (request.getMethod().equals(Request.BYE))
-            processBye(request, serverTransactionId);
-        else if (request.getMethod().equals(Request.INVITE))
-            processInvite(requestReceivedEvent, serverTransactionId);
-        else if (request.getMethod().equals(Request.ACK))
-            processAck(request, serverTransactionId);
-        else if ( request.getMethod().equals(Request.CANCEL) )
-        	processCancel(request, serverTransactionId);
+		try {
+			requestProcessor.process(requestReceivedEvent, dialog);
+		} catch(Exception e) {
+			e.printStackTrace();
+		}
 	}
 
 	public void processResponse(ResponseEvent responseReceivedEvent)
 	{	
-		log.debug("Got a response");
+		log.debug("Got a response. Code: " + responseReceivedEvent.getResponse().getStatusCode() + " / CSeq: "
+				+ responseReceivedEvent.getResponse().getHeader(CSeqHeader.NAME));
 		
 		Response response = (Response) responseReceivedEvent.getResponse();
 		ClientTransaction tid = responseReceivedEvent.getClientTransaction();
@@ -270,7 +318,9 @@ public class SipgateSipListener implements SipListener
 				if (cseq.getMethod().equals(Request.REGISTER))
 				{
 					ContactHeader contactHeader = (ContactHeader) response.getHeader("Contact");
-					Integer seconds = contactHeader.getExpires();
+					Long seconds = (long) contactHeader.getExpires();
+					Long delay = (seconds * 1000) - 100;
+					new Timer().schedule(new MyTimerTask(this), delay);
 					log.debug("Okay. We are registered for next " + seconds + " seconds.");
 				}
 				else if (cseq.getMethod().equals(Request.INVITE))
@@ -299,119 +349,21 @@ public class SipgateSipListener implements SipListener
 
 	public void processTimeout(TimeoutEvent arg0)
 	{
-		// TODO Auto-generated method stub
-		log.debug(arg0);
+        log.debug("Process event recieved.");
 	}
 
 	public void processTransactionTerminated(TransactionTerminatedEvent arg0)
 	{
-        log.debug("Transaction terminated event recieved");
+        log.debug("Transaction terminated event recieved.");
 	}
-	
-    public void processBye(Request request,
-            ServerTransaction serverTransactionId) {
-        try {
-            log.debug("got a bye");
-            if (serverTransactionId == null) {
-                log.debug("null TID.");
-                return;
-            }
-            Dialog dialog = serverTransactionId.getDialog();
-            log.debug("Dialog State = " + dialog.getState());
-            Response response = messageFactory.createResponse(200, request);
-            serverTransactionId.sendResponse(response);
-            log.debug("Sending OK.");
-            log.debug("Dialog State = " + dialog.getState());
 
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            System.exit(0);
+	public void processDialogTerminated(DialogTerminatedEvent arg0)
+	{
+        log.debug("Dialog terminated event recieved.");
+	}
 
-        }
-    }
-    
-    /**
-     * Process the invite request.
-     */
-    public void processInvite(RequestEvent requestEvent,ServerTransaction serverTransaction) {
-        SipProvider sipProvider = (SipProvider) requestEvent.getSource();
-        Request request = requestEvent.getRequest();
-        try {
-            log.debug("Got an Invite sending Trying");
-
-            FromHeader from = (FromHeader) request.getHeader("From");
-        	log.debug("Call from: " + from.getAddress().getDisplayName() +"/"+ from.getAddress().getURI());
-
-        	ContactHeader contact = (ContactHeader) request.getHeader("Contact");
-        	log.debug("Contact: " + contact.getAddress().getDisplayName() +"/"+ contact.getAddress().getURI());
-            
-            // log.debug("shootme: " + request);
-            Response response = messageFactory.createResponse(Response.TRYING,
-                    request);
-            ServerTransaction st = requestEvent.getServerTransaction();
-
-            if (st == null) {
-                st = sipProvider.getNewServerTransaction(request);
-            }
-            dialog = st.getDialog();
-
-            st.sendResponse(response);
-
-            Response okResponse = messageFactory.createResponse(Response.NOT_FOUND,
-                    request);
-            
-            ToHeader toHeader = (ToHeader) okResponse.getHeader(ToHeader.NAME);
-            toHeader.setTag("4321"); // Application is supposed to set.
-            
-            inviteTid = st;
-            // Defer sending the OK to simulate the phone ringing.
-            inviteRequest = request;
-            
-            try {
-                if (inviteTid.getState() != TransactionState.COMPLETED) {
-                    inviteTid.sendResponse(okResponse);
-                }
-            } catch (SipException ex) {
-                ex.printStackTrace();
-            } catch (InvalidArgumentException ex) {
-                ex.printStackTrace();
-            }            
-           
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            System.exit(0);
-        }
-    }
-    
-    public void processCancel(Request request,
-            ServerTransaction serverTransactionId) {
-        try {
-            log.debug("shootme:  got a cancel.");
-            if (serverTransactionId == null) {
-                log.debug("shootme:  null tid.");
-                return;
-            }
-            Response response = messageFactory.createResponse(200, request);
-            serverTransactionId.sendResponse(response);
-            if (dialog.getState() != DialogState.CONFIRMED) {
-                response = messageFactory.createResponse(
-                        Response.REQUEST_TERMINATED, inviteRequest);
-                inviteTid.sendResponse(response);
-            }
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            System.exit(0);
-
-        }
-    }
-    
-    /**
-     * Process the ACK request. Send the bye and complete the call flow.
-     */
-    public void processAck(Request request,
-            ServerTransaction serverTransaction) {
-        log.debug("shootme: got an ACK! ");
-        log.debug("Dialog State = " + dialog.getState());
-    }    
+	public void processIOException(IOExceptionEvent arg0)
+	{
+        log.debug("IO Exception event recieved.");
+	}	
 }
